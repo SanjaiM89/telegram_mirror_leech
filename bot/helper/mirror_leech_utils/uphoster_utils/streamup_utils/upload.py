@@ -69,6 +69,8 @@ class StreamUpUpload:
         
         cmd = [
             "curl",
+            "--connect-timeout", "30",
+            "--max-time", "600",
             "-w", "\n%{http_code}",
             "--http1.1",
             "-F", f"api_key={self.api_key}",
@@ -124,6 +126,10 @@ class StreamUpUpload:
         http_code = lines[-1]
         response_body = "\n".join(lines[:-1])
         
+        # Handle network failure (HTTP 000 means curl couldn't connect)
+        if http_code == "000":
+            raise Exception("Network error: Unable to connect to StreamUP server. Check your internet connection or try again later.")
+        
         if http_code == "200":
              try:
                  data = json_loads(response_body)
@@ -146,6 +152,8 @@ class StreamUpUpload:
         
         elif http_code == "413":
              raise Exception("StreamUP Error: File too large (HTTP 413). Check account limits.")
+        elif http_code == "500":
+             raise Exception(f"StreamUP server error (HTTP 500): The service may be temporarily unavailable. Response: {response_body}")
         else:
              raise Exception(f"StreamUP Upload Error: HTTP {http_code}. Response: {response_body}")
 

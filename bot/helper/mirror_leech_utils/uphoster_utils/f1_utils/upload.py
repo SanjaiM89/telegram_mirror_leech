@@ -59,6 +59,8 @@ class F1Upload:
         cmd = [
             "curl",
             "-s",
+            "--connect-timeout", "30",
+            "--max-time", "60",
             "-X", "GET",
             "-H", f"Authorization: Bearer {self.api_key}",
             "-H", "Content-Type: application/json",
@@ -103,6 +105,8 @@ class F1Upload:
         # 1. Upload File
         cmd = [
             "curl",
+            "--connect-timeout", "30",
+            "--max-time", "600",
             "-w", "\n%{http_code}\n%{redirect_url}",
             "--http1.1",
             "-F", f"file[]=@{file_path}",
@@ -160,6 +164,10 @@ class F1Upload:
 
         redirect_url = lines[-1]
         http_code = lines[-2]
+        
+        # Handle network failure (HTTP 000 means curl couldn't connect)
+        if http_code == "000":
+            raise Exception("Network error: Unable to connect to 1fichier server. Check your internet connection or try again later.")
         
         if http_code == "302" and redirect_url:
              if not redirect_url.startswith("http"):
