@@ -155,6 +155,8 @@ async def load_settings():
                 await remove("sabnzbd/SABnzbd.ini.bak")
             ((key, value),) = nzb_opt.items()
             file_ = key.replace("__", ".")
+            if not await aiopath.exists("sabnzbd"):
+                await makedirs("sabnzbd")
             async with aiopen(f"sabnzbd/{file_}", "wb+") as f:
                 await f.write(value)
             LOGGER.info("Loaded.. Sabnzbd Data from MongoDB")
