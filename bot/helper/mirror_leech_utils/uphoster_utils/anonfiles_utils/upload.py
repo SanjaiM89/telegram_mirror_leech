@@ -30,6 +30,7 @@ class AnonFilesUpload:
         self.last_uploaded = 0
         self.total_time = 0
         self.total_files = 0
+        self.total_folders = 0
         self.is_uploading = True
         self.update_interval = 3
 
