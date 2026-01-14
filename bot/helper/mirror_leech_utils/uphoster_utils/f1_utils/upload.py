@@ -60,6 +60,7 @@ class F1Upload:
             "-X", "POST",
             "-H", f"Authorization: Bearer {self.api_key}",
             "-H", "Content-Type: application/json",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "-d", "{}",
             self.api_url
         ]
@@ -96,6 +97,7 @@ class F1Upload:
              raise ValueError("1fichier API key not configured!")
              
         upload_url = await self.get_upload_server()
+        LOGGER.info(f"DEBUG: F1 Upload URL: {upload_url}")
         
         cmd = [
             "curl",
@@ -103,6 +105,7 @@ class F1Upload:
             "-w", "\n%{http_code}",
             "--http1.1",
             "-F", f"file=@{file_path}",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             upload_url
         ]
         
