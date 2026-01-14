@@ -99,10 +99,11 @@ class F1Upload:
         upload_url = f"https://{server_data['url']}/upload.cgi?id={server_data['id']}"
         LOGGER.info(f"DEBUG: F1 Upload URL: {upload_url}")
         
+        # 1. Upload File
         cmd = [
             "curl",
             "-s",
-            "-w", "\n%{http_code}",
+            "-w", "\n%{http_code}\n%{redirect_url}",
             "--http1.1",
             "-F", f"file[]=@{file_path}",
             "-H", f"Authorization: Bearer {self.api_key}",
@@ -120,31 +121,98 @@ class F1Upload:
         if not lines:
              raise Exception(f"Curl produced no output. Stderr: {process.stderr.decode().strip()}")
              
-        http_code = lines[-1]
-        response_body = "\n".join(lines[:-1]) # XML/HTML response usually from 1fichier
+        # Expected output format from -w:
+        # [Response Body]
+        # [HTTP Code]
+        # [Redirect URL]
         
-        if not http_code.startswith("2"):
-             raise Exception(f"F1 Upload Error: HTTP {http_code}. Response: {response_body}")
+        if len(lines) < 2:
+             raise Exception(f"Unexpected curl output: {output}")
 
-        # 1fichier returns links in response body differently based on upload method.
-        # Usually it returns an XML or simple text with the download link.
-        # We need to parse it. 
-        # The documentation doesn't specify the exact response format for curl upload, 
-        # but typically it's the download link or a list of links.
-        # Let's assume the response body contains the link or we parse it.
-        # Based on common knowledge, it returns a text with the link or XML.
-        # Let's verify via testing or try to extract any link starting with https://1fichier.com/
+        redirect_url = lines[-1]
+        http_code = lines[-2]
+        response_body = "\n".join(lines[:-2])
         
-        import re
-        match = re.search(r'https?://1fichier\.com/\?\w+', response_body)
-        if match:
-            return match.group(0)
+        if http_code == "302" and redirect_url:
+             # Success! Now fetch the download link from the redirect URL
+             # Redirect URL example: /end.pl?xid=...
+             # We need to construct full URL: https://{server_host}{redirect_url}
+             # Wait, redirect_url from curl might be absolute or relative. 
+             # If relative, we prepend the server host.
+             
+             if not redirect_url.startswith("http"):
+                 # Extract host from upload_url
+                 from urllib.parse import urlparse
+                 parsed_up = urlparse(upload_url)
+                 base_url = f"{parsed_up.scheme}://{parsed_up.netloc}"
+                 report_url = f"{base_url}{redirect_url}"
+             else:
+                 report_url = redirect_url
+                 
+             # Append &JSON=1 to get JSON report
+             if "?" in report_url:
+                 report_url += "&JSON=1"
+             else:
+                 report_url += "?JSON=1"
+                 
+             # 2. Get Report
+             cmd_report = [
+                "curl",
+                "-s",
+                "-X", "GET",
+                "-H", f"Authorization: Bearer {self.api_key}",
+                "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                report_url
+             ]
+             
+             def _run_report_curl():
+                 return srun(cmd_report, stdout=PIPE, stderr=PIPE)
+                 
+             process_rep = await get_event_loop().run_in_executor(None, _run_report_curl)
+             
+             if process_rep.returncode != 0:
+                 raise Exception(f"F1 Report Error: {process_rep.stderr.decode().strip()}")
+                 
+             rep_stdout = process_rep.stdout.decode().strip()
+             try:
+                 rep_data = json_loads(rep_stdout)
+                 # JSON return (pretty):
+                 # {
+                 #   "incoming" : 0,
+                 #   "links" : [
+                 #     {
+                 #       "download" : "https://1fichier.com/?abcef",
+                 #       "filename" : "Filename.ext",
+                 #       ...
+                 #     }
+                 #   ]
+                 # }
+                 if "links" in rep_data and len(rep_data["links"]) > 0:
+                     return rep_data["links"][0]["download"]
+                 else:
+                     raise Exception(f"No links found in report: {rep_stdout}")
+             except Exception as e:
+                 # Fallback: parse text/html if JSON fails (though we requested JSON)
+                 import re
+                 match = re.search(r'https?://1fichier\.com/\?\w+', rep_stdout)
+                 if match:
+                     return match.group(0)
+                 raise Exception(f"F1 Report JSON Error: {e} | Response: {rep_stdout}")
+
+        elif http_code.startswith("2"):
+             # If 200 OK, maybe it returned the link directly?
+             # But docs say 302 is success. 200 might be error page?
+             # "200 Return program OK ... Html page with a clear error message"
+             # So 200 is likely an ERROR if it's not a redirect to end.pl
+             # But let's check body for link anyway
+             import re
+             match = re.search(r'https?://1fichier\.com/\?\w+', response_body)
+             if match:
+                 return match.group(0)
+             raise Exception(f"F1 Upload returned 200 but no link found. Response: {response_body}")
+        
         else:
-            # Maybe it returns just the link?
-            if response_body.startswith("https://1fichier.com"):
-                return response_body.strip()
-            # If we can't find it, dump response
-            raise Exception(f"Could not find download link in response: {response_body}")
+             raise Exception(f"F1 Upload Error: HTTP {http_code}. Response: {response_body}")
 
     async def upload(self):
         try:
