@@ -296,7 +296,7 @@ class TaskConfig:
             )
             default_upload = (
                 self.user_dict.get("DEFAULT_UPLOAD", "") or Config.DEFAULT_UPLOAD
-            )
+            ).lower()
             if not self.is_uphoster and (
                 (
                     not self.up_dest
@@ -315,9 +315,15 @@ class TaskConfig:
                 self.up_dest = self.user_dict.get("GDRIVE_ID") or Config.GDRIVE_ID
 
             if self.is_uphoster and not self.up_dest:
-                uphoster_service = self.user_dict.get("UPHOSTER_SERVICE", "gofile")
+                # If we are here because of default_upload, use it as the service
+                if default_upload in ["gofile", "streamup", "anonfiles", "f1"]:
+                    uphoster_service = default_upload
+                else:
+                    uphoster_service = self.user_dict.get("UPHOSTER_SERVICE", "gofile")
+                
                 services = uphoster_service.split(",")
                 for service in services:
+                    service = service.lower()
                     if service == "gofile":
                         if not (
                             self.user_dict.get("GOFILE_TOKEN") or Config.GOFILE_API
@@ -335,6 +341,33 @@ class TaskConfig:
                             or Config.PIXELDRAIN_KEY
                         ):
                             raise ValueError("No PixelDrain Key Found!")
+                    elif service == "streamup":
+                        if not (
+                            self.user_dict.get("STREAMUP_API")
+                            or Config.STREAMUP_API
+                        ):
+                            raise ValueError("No StreamUP API Key Found!")
+                    elif service == "anonfiles":
+                        if not (
+                            self.user_dict.get("ANONFILES_API")
+                            or Config.ANONFILES_API
+                        ):
+                            raise ValueError("No AnonFiles API Key Found!")
+                    elif service == "f1":
+                        if not (
+                            self.user_dict.get("F1_API_KEY")
+                            or Config.F1_API_KEY
+                        ):
+                            raise ValueError("No 1fichier API Key Found!")
+                            
+                # Save the determined service for this task if it was derived from default_upload
+                # But wait, MultiUphosterUpload reads user_data['UPHOSTER_SERVICE'].
+                # We can't easily inject it into MultiUphosterUpload unless we modify user_data or pass it differently.
+                # However, MultiUphosterUpload is initialized in TaskListener using self.user_dict.get("UPHOSTER_SERVICE").
+                # So we should update self.user_dict["UPHOSTER_SERVICE"] for this instance.
+                if default_upload in ["gofile", "streamup", "anonfiles", "f1"]:
+                    self.user_dict["UPHOSTER_SERVICE"] = default_upload
+                    
                 self.up_dest = "Uphoster"
 
             if not self.up_dest:
