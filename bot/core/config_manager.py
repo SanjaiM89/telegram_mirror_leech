@@ -113,7 +113,7 @@ class Config:
     USER_TIME_INTERVAL = 0
     UPLOAD_PATHS = {}
     UPSTREAM_REPO = ""
-    UPSTREAM_BRANCH = "master"
+    UPSTREAM_BRANCH = "main"
     UPDATE_PKGS = True
     USENET_SERVERS = []
     USER_SESSION_STRING = ""
