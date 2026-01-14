@@ -101,15 +101,22 @@ class AnonFilesUpload:
                        ProgressFileReader(file_path, self.__progress_callback),
                        filename=ospath.basename(file_path))
 
-        async with ClientSession() as session:
-            async with session.post(url, data=data) as resp:
-                if resp.status == 200:
-                    try:
-                        return await resp.json()
-                    except Exception as e:
-                        raise Exception(f"JSON Decode Error: {e}")
-                else:
-                    raise Exception(f"HTTP {resp.status}: {await resp.text()}")
+        # Increase timeout for large file uploads
+        timeout = aiohttp.ClientTimeout(total=None, connect=60, sock_read=600, sock_connect=60)
+        async with ClientSession(timeout=timeout) as session:
+            try:
+                async with session.post(url, data=data) as resp:
+                    if resp.status == 200:
+                        try:
+                            return await resp.json()
+                        except Exception as e:
+                            raise Exception(f"JSON Decode Error: {e}")
+                    elif resp.status == 413:
+                        raise Exception("AnonFiles Error: File is too large for the server (HTTP 413).")
+                    else:
+                        raise Exception(f"HTTP {resp.status}: {await resp.text()}")
+            except aiohttp.ClientError as e:
+                raise Exception(f"Connection Error: {e}")
 
     async def upload(self):
         try:
