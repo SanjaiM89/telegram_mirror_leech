@@ -159,6 +159,13 @@ class StreamUpUpload:
                  raise ValueError("StreamUP API key not configured!")
 
             if await aiopath.isfile(self._path):
+                new_path = ospath.join(
+                    ospath.dirname(self._path), ospath.basename(self._path).replace(" ", "_")
+                )
+                if self._path != new_path:
+                    await aiorename(self._path, new_path)
+                    self._path = new_path
+
                 resp_link = await self.upload_file(self._path)
                 
                 if resp_link:
