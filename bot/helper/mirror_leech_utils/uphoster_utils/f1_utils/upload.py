@@ -57,11 +57,10 @@ class F1Upload:
         cmd = [
             "curl",
             "-s",
-            "-X", "POST",
+            "-X", "GET",
             "-H", f"Authorization: Bearer {self.api_key}",
             "-H", "Content-Type: application/json",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "-d", "{}",
             self.api_url
         ]
         
@@ -78,9 +77,9 @@ class F1Upload:
             
         try:
             data = json_loads(stdout)
-            if "url" in data:
-                return data["url"]
-            elif "message" in data: # Handle potential error message from API
+            if "url" in data and "id" in data:
+                return data
+            elif "message" in data:
                  raise Exception(f"F1 API Error: {data['message']}")
             else:
                  raise Exception(f"F1 API Unknown Response: {stdout}")
@@ -96,7 +95,8 @@ class F1Upload:
         if not self.api_key:
              raise ValueError("1fichier API key not configured!")
              
-        upload_url = await self.get_upload_server()
+        server_data = await self.get_upload_server()
+        upload_url = f"https://{server_data['url']}/upload.cgi?id={server_data['id']}"
         LOGGER.info(f"DEBUG: F1 Upload URL: {upload_url}")
         
         cmd = [
@@ -104,7 +104,8 @@ class F1Upload:
             "-s",
             "-w", "\n%{http_code}",
             "--http1.1",
-            "-F", f"file=@{file_path}",
+            "-F", f"file[]=@{file_path}",
+            "-H", f"Authorization: Bearer {self.api_key}",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             upload_url
         ]
