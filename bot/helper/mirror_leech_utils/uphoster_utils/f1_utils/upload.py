@@ -1,8 +1,8 @@
 from logging import getLogger
 from os import path as ospath
 from json import loads as json_loads
-from asyncio import get_event_loop
-from subprocess import run as srun, PIPE
+from asyncio import create_subprocess_exec, subprocess
+import re
 from aiofiles.os import path as aiopath
 from aiofiles.os import rename as aiorename
 from tenacity import (
@@ -30,8 +30,10 @@ class F1Upload:
         self.last_uploaded = 0
         self.total_time = 0
         self.total_files = 0
+        self.total_folders = 0
         self.is_uploading = True
         self.update_interval = 3
+        self.total_size = 0
 
         from bot import user_data
 
@@ -64,27 +66,27 @@ class F1Upload:
             self.api_url
         ]
         
-        def _run_curl():
-            return srun(cmd, stdout=PIPE, stderr=PIPE)
-
-        process = await get_event_loop().run_in_executor(None, _run_curl)
+        process = await create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         
-        stdout = process.stdout.decode().strip()
-        stderr = process.stderr.decode().strip()
-
+        stdout, stderr = await process.communicate()
+        
         if process.returncode != 0:
-            raise Exception(f"F1 Get Server Error: {stderr}")
+            raise Exception(f"F1 Get Server Error: {stderr.decode().strip()}")
             
         try:
-            data = json_loads(stdout)
+            data = json_loads(stdout.decode().strip())
             if "url" in data and "id" in data:
                 return data
             elif "message" in data:
                  raise Exception(f"F1 API Error: {data['message']}")
             else:
-                 raise Exception(f"F1 API Unknown Response: {stdout}")
+                 raise Exception(f"F1 API Unknown Response: {stdout.decode().strip()}")
         except Exception as e:
-             raise Exception(f"F1 Get Server JSON Error: {e} | Response: {stdout}")
+             raise Exception(f"F1 Get Server JSON Error: {e} | Response: {stdout.decode().strip()}")
 
     @retry(
         wait=wait_exponential(multiplier=2, min=4, max=8),
@@ -97,11 +99,11 @@ class F1Upload:
              
         server_data = await self.get_upload_server()
         upload_url = f"https://{server_data['url']}/upload.cgi?id={server_data['id']}"
+        LOGGER.info(f"F1 Upload URL: {upload_url}")
         
         # 1. Upload File
         cmd = [
             "curl",
-            "-s",
             "-w", "\n%{http_code}\n%{redirect_url}",
             "--http1.1",
             "-F", f"file[]=@{file_path}",
@@ -110,37 +112,58 @@ class F1Upload:
             upload_url
         ]
         
-        def _run_curl():
-            return srun(cmd, stdout=PIPE, stderr=PIPE)
-
-        process = await get_event_loop().run_in_executor(None, _run_curl)
+        process = await create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         
-        output = process.stdout.decode().strip()
+        # Read stderr for progress
+        stderr_output = []
+        
+        while True:
+            chunk = await process.stderr.read(1024)
+            if not chunk:
+                break
+            
+            chunk_str = chunk.decode('utf-8', errors='replace')
+            stderr_output.append(chunk_str)
+            
+            matches = re.findall(r'\r\s*(\d+)\s+([0-9.]+)([KMG]?)\s+(\d+)\s+([0-9.]+)([KMG]?)\s+(\d+)\s+([0-9.]+)([KMG]?)', chunk_str)
+            if matches:
+                last_match = matches[-1]
+                up_size_raw = float(last_match[7])
+                up_unit = last_match[8]
+                
+                multiplier = 1
+                if up_unit == 'K': multiplier = 1024
+                elif up_unit == 'M': multiplier = 1024 * 1024
+                elif up_unit == 'G': multiplier = 1024 * 1024 * 1024
+                
+                current_bytes = int(up_size_raw * multiplier)
+                
+                if current_bytes > self.__processed_bytes:
+                    self.__processed_bytes = current_bytes
+
+        stdout_bytes = await process.stdout.read()
+        stdout_str = stdout_bytes.decode().strip()
+        stderr_str = "".join(stderr_output)
+        
+        await process.wait()
+        
+        output = stdout_str
         lines = output.split('\n')
         if not lines:
-             raise Exception(f"Curl produced no output. Stderr: {process.stderr.decode().strip()}")
+             raise Exception(f"Curl produced no output. Stderr: {stderr_str}")
              
-        # Expected output format from -w:
-        # [Response Body]
-        # [HTTP Code]
-        # [Redirect URL]
-        
         if len(lines) < 2:
              raise Exception(f"Unexpected curl output: {output}")
 
         redirect_url = lines[-1]
         http_code = lines[-2]
-        response_body = "\n".join(lines[:-2])
         
         if http_code == "302" and redirect_url:
-             # Success! Now fetch the download link from the redirect URL
-             # Redirect URL example: /end.pl?xid=...
-             # We need to construct full URL: https://{server_host}{redirect_url}
-             # Wait, redirect_url from curl might be absolute or relative. 
-             # If relative, we prepend the server host.
-             
              if not redirect_url.startswith("http"):
-                 # Extract host from upload_url
                  from urllib.parse import urlparse
                  parsed_up = urlparse(upload_url)
                  base_url = f"{parsed_up.scheme}://{parsed_up.netloc}"
@@ -148,7 +171,6 @@ class F1Upload:
              else:
                  report_url = redirect_url
                  
-             # Append &JSON=1 to get JSON report
              if "?" in report_url:
                  report_url += "&JSON=1"
              else:
@@ -164,34 +186,24 @@ class F1Upload:
                 report_url
              ]
              
-             def _run_report_curl():
-                 return srun(cmd_report, stdout=PIPE, stderr=PIPE)
-                 
-             process_rep = await get_event_loop().run_in_executor(None, _run_report_curl)
+             process_rep = await create_subprocess_exec(
+                *cmd_report,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+             )
+             stdout_rep, stderr_rep = await process_rep.communicate()
              
              if process_rep.returncode != 0:
-                 raise Exception(f"F1 Report Error: {process_rep.stderr.decode().strip()}")
+                 raise Exception(f"F1 Report Error: {stderr_rep.decode().strip()}")
                  
-             rep_stdout = process_rep.stdout.decode().strip()
+             rep_stdout = stdout_rep.decode().strip()
              try:
                  rep_data = json_loads(rep_stdout)
-                 # JSON return (pretty):
-                 # {
-                 #   "incoming" : 0,
-                 #   "links" : [
-                 #     {
-                 #       "download" : "https://1fichier.com/?abcef",
-                 #       "filename" : "Filename.ext",
-                 #       ...
-                 #     }
-                 #   ]
-                 # }
                  if "links" in rep_data and len(rep_data["links"]) > 0:
                      return rep_data["links"][0]["download"]
                  else:
                      raise Exception(f"No links found in report: {rep_stdout}")
              except Exception as e:
-                 # Fallback: parse text/html if JSON fails (though we requested JSON)
                  import re
                  match = re.search(r'https?://1fichier\.com/\?\w+', rep_stdout)
                  if match:
@@ -199,23 +211,19 @@ class F1Upload:
                  raise Exception(f"F1 Report JSON Error: {e} | Response: {rep_stdout}")
 
         elif http_code.startswith("2"):
-             # If 200 OK, maybe it returned the link directly?
-             # But docs say 302 is success. 200 might be error page?
-             # "200 Return program OK ... Html page with a clear error message"
-             # So 200 is likely an ERROR if it's not a redirect to end.pl
-             # But let's check body for link anyway
              import re
-             match = re.search(r'https?://1fichier\.com/\?\w+', response_body)
+             match = re.search(r'https?://1fichier\.com/\?\w+', "\n".join(lines[:-2]))
              if match:
                  return match.group(0)
-             raise Exception(f"F1 Upload returned 200 but no link found. Response: {response_body}")
+             raise Exception(f"F1 Upload returned 200 but no link found. Response: {output}")
         
         else:
-             raise Exception(f"F1 Upload Error: HTTP {http_code}. Response: {response_body}")
+             raise Exception(f"F1 Upload Error: HTTP {http_code}. Response: {output}")
 
     async def upload(self):
         try:
             LOGGER.info(f"1fichier Uploading: {self._path}")
+            self.total_size = await aiopath.getsize(self._path)
             self._updater = SetInterval(self.update_interval, self.progress)
 
             if not self.api_key:
