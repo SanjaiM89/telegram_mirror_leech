@@ -69,7 +69,8 @@ class AnonFilesUpload:
         
         cmd = [
             "curl",
-            "-s", # Silent mode (don't show progress meter)
+            "-s", 
+            "--http1.1", # Force HTTP/1.1 to avoid HTTP/2 stream issues with some servers
             "-F", f"file=@{file_path}",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             url
@@ -83,13 +84,19 @@ class AnonFilesUpload:
         
         stdout, stderr = await process.communicate()
         
+        decoded_stdout = stdout.decode().strip()
+        decoded_stderr = stderr.decode().strip()
+
         if process.returncode != 0:
-            raise Exception(f"Curl Error: {stderr.decode().strip()}")
+            raise Exception(f"Curl Error: {decoded_stderr}")
             
+        if not decoded_stdout:
+             raise Exception(f"AnonFiles returned empty response. Curl Stderr: {decoded_stderr}")
+
         try:
-            return json_loads(stdout.decode().strip())
+            return json_loads(decoded_stdout)
         except Exception as e:
-             raise Exception(f"JSON Decode Error: {e} | Response: {stdout.decode().strip()}")
+             raise Exception(f"JSON Decode Error: {e} | Response: {decoded_stdout}")
 
     async def upload(self):
         try:
