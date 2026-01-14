@@ -204,14 +204,12 @@ class F1Upload:
                  else:
                      raise Exception(f"No links found in report: {rep_stdout}")
              except Exception as e:
-                 import re
                  match = re.search(r'https?://1fichier\.com/\?\w+', rep_stdout)
                  if match:
                      return match.group(0)
                  raise Exception(f"F1 Report JSON Error: {e} | Response: {rep_stdout}")
 
         elif http_code.startswith("2"):
-             import re
              match = re.search(r'https?://1fichier\.com/\?\w+', "\n".join(lines[:-2]))
              if match:
                  return match.group(0)
