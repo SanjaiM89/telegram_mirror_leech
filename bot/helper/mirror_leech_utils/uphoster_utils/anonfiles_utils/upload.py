@@ -131,7 +131,7 @@ class AnonFilesUpload:
         response_body = "\n".join(lines[:-1])
         
         if http_code == "413":
-             raise Exception("AnonFiles Error: File is too large for the server (HTTP 413).")
+             raise Exception("AnonFiles Error: File is too large (HTTP 413). This is likely a 100MB Cloudflare limit on the server.")
         elif http_code == "502":
              raise Exception("AnonFiles Error: Bad Gateway (HTTP 502).")
         elif not http_code.startswith("2"):
