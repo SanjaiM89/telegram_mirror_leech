@@ -1,7 +1,10 @@
 from logging import getLogger
 from os import path as ospath
-from aiohttp import ClientSession
+from json import loads as json_loads
+from asyncio import create_subprocess_exec, subprocess
+import re
 from aiofiles.os import path as aiopath
+from aiofiles.os import rename as aiorename
 from tenacity import (
     RetryError,
     retry,
@@ -22,13 +25,15 @@ class StreamUpUpload:
         self._updater = None
         self._path = path
         self._is_errored = False
-        self.api_url = "https://api.streamup.cc/v1"
+        self.api_url = "https://api.streamup.cc/v1/upload"
         self.__processed_bytes = 0
         self.last_uploaded = 0
         self.total_time = 0
         self.total_files = 0
+        self.total_folders = 0
         self.is_uploading = True
         self.update_interval = 3
+        self.total_size = 0
 
         from bot import user_data
 
@@ -46,59 +51,9 @@ class StreamUpUpload:
     def processed_bytes(self):
         return self.__processed_bytes
 
-    def __progress_callback(self, current):
-        chunk_size = current - self.last_uploaded
-        self.last_uploaded = current
-        self.__processed_bytes += chunk_size
-
     async def progress(self):
-        self.total_time += self.update_interval
-
-    async def __get_upload_server(self):
-        if not self.api_key:
-            raise Exception("StreamUP API key not found!")
-            
-        # Attempt to find an upload server. 
-        # Since specific upload documentation is sparse, we will try a common pattern
-        # or use the remote upload if a link is provided (handled elsewhere).
-        # For file upload, we'll assume there is a specific endpoint or we might fallback.
-        
-        # Note: If this fails, it might be because StreamUP only supports Remote Upload 
-        # or uses a specific different endpoint.
-        
-        # Trying a likely endpoint for upload server based on common scripts
-        url = f"{self.api_url}/server" # Hypothetical
-        
-        # If StreamUP follows DoodStream style:
-        # url = f"https://streamup.cc/api/upload/server?key={self.api_key}"
-        
-        # Given the "v1" in the provided docs, we'll try to find a compatible upload mechanism.
-        # For now, I will assume a standard POST to an upload URL retrieved from an API,
-        # or if that doesn't exist, we might need to rely on the user providing a URL.
-        
-        # Let's try to get account info first to verify key
-        verify_url = f"{self.api_url}/data?api_key={self.api_key}"
-        async with ClientSession() as session:
-            async with session.get(verify_url) as resp:
-                data = await resp.json()
-                if resp.status != 200: # or check for success/error in json
-                     if "message" in data:
-                         raise Exception(f"StreamUP Error: {data['message']}")
-                     raise Exception("Invalid API Key or StreamUP Error")
-
-        # Since we don't have the exact file upload API, and cannot expose the local file easily,
-        # we will try to use a hardcoded common upload endpoint if one exists, 
-        # OR raise an error stating File Upload is not supported yet without docs.
-        
-        # However, to be helpful, I will try to implement a standard multipart upload 
-        # to a likely endpoint. Many sites accept POST to /upload/server
-        
-        # Placeholder for valid upload URL logic.
-        # If this is not found, we can't upload local files.
-        # raise Exception("Direct file upload to StreamUP is not fully implemented due to missing API documentation for file uploads. Only Remote Upload via URL is supported by their public docs.")
-        
-        # Attempting a fallback that works on some clones:
-        return "https://streamup.cc/upload" # This is a guess.
+        if self.is_uploading:
+             self.total_time += self.update_interval
 
     @retry(
         wait=wait_exponential(multiplier=2, min=4, max=8),
@@ -106,35 +61,120 @@ class StreamUpUpload:
         retry=retry_if_exception_type(Exception),
     )
     async def upload_file(self, file_path):
-        # We need an upload server.
-        # Since we can't find it, we will fail gracefully or try a generic one.
-        # But to avoid user confusion, I will raise a clear error.
+        if not self.api_key:
+             raise ValueError("StreamUP API key not configured!")
+             
+        # StreamUP API: POST /v1/upload
+        # Params: api_key, file
         
-        # UNLESS, the user provided 'strmup' implies they know it works.
-        # I will leave this as a placeholder that raises an error until docs are found.
-        # But wait, maybe I can use 'curl' logic if I had the endpoint.
+        cmd = [
+            "curl",
+            "-w", "\n%{http_code}",
+            "--http1.1",
+            "-F", f"api_key={self.api_key}",
+            "-F", f"file=@{file_path}",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            self.api_url
+        ]
         
-        # Let's try to infer it from the user's prompt "like gofile".
+        process = await create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         
-        # I will look for 'streamup.cc' upload endpoint one last time in my mind...
-        # If I can't find it, I'll return a message.
+        # Read stderr for progress
+        stderr_output = []
         
-        # Actually, let's implement the structure.
+        while True:
+            chunk = await process.stderr.read(1024)
+            if not chunk:
+                break
+            
+            chunk_str = chunk.decode('utf-8', errors='replace')
+            stderr_output.append(chunk_str)
+            
+            matches = re.findall(r'\r\s*(\d+)\s+([0-9.]+)([KMG]?)\s+(\d+)\s+([0-9.]+)([KMG]?)\s+(\d+)\s+([0-9.]+)([KMG]?)', chunk_str)
+            if matches:
+                last_match = matches[-1]
+                up_size_raw = float(last_match[7])
+                up_unit = last_match[8]
+                
+                multiplier = 1
+                if up_unit == 'K': multiplier = 1024
+                elif up_unit == 'M': multiplier = 1024 * 1024
+                elif up_unit == 'G': multiplier = 1024 * 1024 * 1024
+                
+                current_bytes = int(up_size_raw * multiplier)
+                
+                if current_bytes > self.__processed_bytes:
+                    self.__processed_bytes = current_bytes
+
+        stdout_bytes = await process.stdout.read()
+        stdout_str = stdout_bytes.decode().strip()
+        stderr_str = "".join(stderr_output)
         
-        raise Exception("StreamUP direct file upload is not supported. Only Remote Upload (URL) is supported by their API.")
+        await process.wait()
+        
+        output = stdout_str
+        lines = output.split('\n')
+        if not lines:
+             raise Exception(f"Curl produced no output. Stderr: {stderr_str}")
+             
+        http_code = lines[-1]
+        response_body = "\n".join(lines[:-1])
+        
+        if http_code == "200":
+             try:
+                 data = json_loads(response_body)
+                 # Response: { "filecode": "https://streamup.cc/abcdef123", "video_id": 123, "title": "My Video" }
+                 # Or Error: { "success": false, "message": "..." }
+                 
+                 if "filecode" in data:
+                     return data["filecode"]
+                 elif not data.get("success", True):
+                     raise Exception(f"StreamUP API Error: {data.get('message', 'Unknown Error')}")
+                 else:
+                     # Maybe success is implicit if filecode exists?
+                     # Let's assume filecode is the key.
+                     if "filecode" in data: 
+                         return data["filecode"]
+                     # Handle edge case
+                     raise Exception(f"StreamUP Unknown Response: {response_body}")
+             except Exception as e:
+                 raise Exception(f"StreamUP JSON Error: {e} | Response: {response_body}")
+        
+        elif http_code == "413":
+             raise Exception("StreamUP Error: File too large (HTTP 413). Check account limits.")
+        else:
+             raise Exception(f"StreamUP Upload Error: HTTP {http_code}. Response: {response_body}")
 
     async def upload(self):
         try:
             LOGGER.info(f"StreamUP Uploading: {self._path}")
+            self.total_size = await aiopath.getsize(self._path)
             self._updater = SetInterval(self.update_interval, self.progress)
 
             if not self.api_key:
                  raise ValueError("StreamUP API key not configured!")
 
             if await aiopath.isfile(self._path):
-                await self.upload_file(self._path)
+                resp_link = await self.upload_file(self._path)
+                
+                if resp_link:
+                    self.total_files = 1
+                    await self.listener.on_upload_complete(
+                        resp_link,
+                        self.total_files,
+                        0, # folders
+                        "File",
+                        dir_id="",
+                    )
+                else:
+                    raise Exception("StreamUP Upload Failed: No link returned")
+
             else:
-                raise ValueError("StreamUP only supports single file upload (for now).")
+                raise ValueError("StreamUP only supports single file upload.")
                 
         except Exception as err:
             if isinstance(err, RetryError):
