@@ -16,6 +16,9 @@ from bot.helper.mirror_leech_utils.uphoster_utils.streamup_utils.upload import (
 from bot.helper.mirror_leech_utils.uphoster_utils.anonfiles_utils.upload import (
     AnonFilesUpload,
 )
+from bot.helper.mirror_leech_utils.uphoster_utils.f1_utils.upload import (
+    F1Upload,
+)
 
 LOGGER = getLogger(__name__)
 
@@ -51,6 +54,8 @@ class MultiUphosterUpload:
                 self.uploaders.append(
                     AnonFilesUpload(ProxyListener(self, "anonfiles"), path)
                 )
+            elif service == "f1":
+                self.uploaders.append(F1Upload(ProxyListener(self, "f1"), path))
 
     @property
     def speed(self):

@@ -300,9 +300,9 @@ class TaskConfig:
             if not self.is_uphoster and (
                 (
                     not self.up_dest
-                    and default_upload in ["gofile", "streamup", "anonfiles"]
+                    and default_upload in ["gofile", "streamup", "anonfiles", "f1"]
                 )
-                or self.up_dest in ["gofile", "streamup", "anonfiles"]
+                or self.up_dest in ["gofile", "streamup", "anonfiles", "f1"]
             ):
                 self.is_uphoster = True
             if not self.is_uphoster and (

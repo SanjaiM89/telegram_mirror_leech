@@ -100,6 +100,7 @@ class Config:
     STREAMWISH_API = ""
     STREAMUP_API = ""
     ANONFILES_API = ""
+    F1_API_KEY = ""
     SUDO_USERS = ""
     TELEGRAM_API = 0
     TELEGRAM_HASH = ""

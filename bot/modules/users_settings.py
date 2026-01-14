@@ -51,6 +51,7 @@ uphoster_options = [
     "PIXELDRAIN_KEY",
     "STREAMUP_API",
     "ANONFILES_API",
+    "F1_API_KEY",
 ]
 rclone_options = ["RCLONE_CONFIG", "RCLONE_PATH", "RCLONE_FLAGS"]
 gdrive_options = ["TOKEN_PICKLE", "GDRIVE_ID", "INDEX_URL"]
@@ -298,6 +299,11 @@ Here I will explain how to use mltb.* which is reference to files you want to wo
         "String",
         "AnonFiles API Key",
         "<i>Send your AnonFiles API Key.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
+    ),
+    "F1_API_KEY": (
+        "String",
+        "1fichier API Key",
+        "<i>Send your 1fichier API Key.</i> \n┖ <b>Time Left :</b> <code>60 sec</code>",
     ),
 }
 
@@ -550,6 +556,7 @@ async def get_user_settings(from_user, stype="main"):
         buttons.data_button("PixelDrain Tools", f"userset {user_id} pixeldrain")
         buttons.data_button("StreamUP Tools", f"userset {user_id} streamup")
         buttons.data_button("AnonFiles Tools", f"userset {user_id} anonfiles")
+        buttons.data_button("1fichier Tools", f"userset {user_id} f1")
         buttons.data_button("Back", f"userset {user_id} back", "footer")
         buttons.data_button("Close", f"userset {user_id} close", "footer")
         btns = buttons.build_menu(1)
@@ -613,6 +620,24 @@ async def get_user_settings(from_user, stype="main"):
 ┟ <b>Name</b> → {user_name}
 ┃
 ┖ <b>AnonFiles API</b> → <code>{aftoken}</code>"""
+
+    elif stype == "f1":
+        buttons.data_button("1fichier API", f"userset {user_id} menu F1_API_KEY")
+        buttons.data_button("Back", f"userset {user_id} back uphoster", "footer")
+        buttons.data_button("Close", f"userset {user_id} close", "footer")
+        btns = buttons.build_menu(1)
+
+        if user_dict.get("F1_API_KEY", False):
+            f1token = user_dict["F1_API_KEY"]
+        elif Config.F1_API_KEY:
+            f1token = Config.F1_API_KEY
+        else:
+            f1token = "None"
+
+        text = f"""⌬ <b>1fichier Settings :</b>
+┟ <b>Name</b> → {user_name}
+┃
+┖ <b>1fichier API</b> → <code>{f1token}</code>"""
 
     elif stype == "buzzheavier":
         buttons.data_button(
@@ -1319,6 +1344,7 @@ async def edit_user_settings(client, query):
         "pixeldrain",
         "streamup",
         "anonfiles",
+        "f1",
         "ffset",
         "advanced",
         "gdrive",
@@ -1356,7 +1382,7 @@ async def edit_user_settings(client, query):
             )
 
         buttons = ButtonMaker()
-        for service in ["gofile", "buzzheavier", "pixeldrain", "streamup", "anonfiles"]:
+        for service in ["gofile", "buzzheavier", "pixeldrain", "streamup", "anonfiles", "f1"]:
             state = "✓" if service in selected_services else ""
             buttons.data_button(
                 f"{service.capitalize()} {state}",
