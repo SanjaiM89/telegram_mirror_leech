@@ -1,6 +1,7 @@
 from logging import getLogger
 from os import path as ospath
-from aiohttp import ClientSession
+from json import loads as json_loads
+from asyncio import create_subprocess_exec, subprocess
 from aiofiles.os import path as aiopath
 from aiofiles.os import rename as aiorename
 from tenacity import (
@@ -47,13 +48,10 @@ class AnonFilesUpload:
     def processed_bytes(self):
         return self.__processed_bytes
 
-    def __progress_callback(self, current):
-        chunk_size = current - self.last_uploaded
-        self.last_uploaded = current
-        self.__processed_bytes += chunk_size
-
     async def progress(self):
-        self.total_time += self.update_interval
+        # Placeholder for progress since we are using curl without progress parsing
+        if self.is_uploading:
+             self.total_time += self.update_interval
 
     @retry(
         wait=wait_exponential(multiplier=2, min=4, max=8),
@@ -66,61 +64,32 @@ class AnonFilesUpload:
              
         url = f"{self.api_url}?key={self.api_key}"
         
-        # Simple file read for aiohttp
-        # Note: For large files, a proper async generator or opened file with progress tracking is ideal.
-        # But mirroring other implementations, we can try basic FormData.
+        # Use curl for upload as it handles multipart/form-data and large files robustly
+        # This bypasses aiohttp issues with chunked encoding or timeouts on some servers
         
-        import aiohttp
+        cmd = [
+            "curl",
+            "-s", # Silent mode (don't show progress meter)
+            "-F", f"file=@{file_path}",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            url
+        ]
+
+        process = await create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
         
-        # We need a way to track progress. using similar approach to GoFileUpload if possible
-        # but GoFileUpload in this repo uses a custom ProgressFileReader.
-        # Let's see if we can reuse it or just use standard aiohttp file sending.
-        # I will use the custom ProgressFileReader if I can import it, 
-        # or implement a simpler version if it's not easily accessible/exportable.
-        # It was defined in GoFileUpload file. I should probably copy it or import it if it was in a common place.
-        # It is NOT in a common place. I will redefine it here for safety and isolation.
+        stdout, stderr = await process.communicate()
         
-        from io import BufferedReader
-        from pathlib import Path
-
-        class ProgressFileReader(BufferedReader):
-            def __init__(self, filename, read_callback=None):
-                super().__init__(open(filename, "rb"))
-                self.__read_callback = read_callback
-                self.length = Path(filename).stat().st_size
-
-            def read(self, size=None):
-                size = size or (self.length - self.tell())
-                if self.__read_callback:
-                    self.__read_callback(self.tell())
-                return super().read(size)
-
-            def __len__(self):
-                return self.length
-
-        data = aiohttp.FormData()
-        # "file" is the key expected by AnonFiles
-        data.add_field('file', 
-                       ProgressFileReader(file_path, self.__progress_callback),
-                       filename=ospath.basename(file_path))
-
-        # Increase timeout for large file uploads
-        timeout = aiohttp.ClientTimeout(total=None, connect=60, sock_read=600, sock_connect=60)
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-        async with ClientSession(timeout=timeout, headers=headers) as session:
-            try:
-                async with session.post(url, data=data) as resp:
-                    if resp.status == 200:
-                        try:
-                            return await resp.json()
-                        except Exception as e:
-                            raise Exception(f"JSON Decode Error: {e}")
-                    elif resp.status == 413:
-                        raise Exception("AnonFiles Error: File is too large for the server (HTTP 413).")
-                    else:
-                        raise Exception(f"HTTP {resp.status}: {await resp.text()}")
-            except aiohttp.ClientError as e:
-                raise Exception(f"Connection Error: {e}")
+        if process.returncode != 0:
+            raise Exception(f"Curl Error: {stderr.decode().strip()}")
+            
+        try:
+            return json_loads(stdout.decode().strip())
+        except Exception as e:
+             raise Exception(f"JSON Decode Error: {e} | Response: {stdout.decode().strip()}")
 
     async def upload(self):
         try:
@@ -131,9 +100,7 @@ class AnonFilesUpload:
                  raise ValueError("AnonFiles API key not configured!")
 
             if await aiopath.isfile(self._path):
-                # Replace spaces with underscores or similar if needed, 
-                # though multipart handles filenames well.
-                # But to be safe and consistent:
+                # Replace spaces with underscores or similar if needed
                 new_path = ospath.join(
                     ospath.dirname(self._path), ospath.basename(self._path).replace(" ", "_")
                 )
@@ -144,7 +111,7 @@ class AnonFilesUpload:
                 resp = await self.upload_file(self._path)
                 
                 if resp.get("status"):
-                    link = resp["data"]["file"]["url"]["full"] # or short
+                    link = resp["data"]["file"]["url"]["full"]
                     self.total_files = 1
                     await self.listener.on_upload_complete(
                         link,
@@ -154,14 +121,8 @@ class AnonFilesUpload:
                         dir_id="",
                     )
                 else:
-                    # Handle error response
                     error_msg = "Unknown Error"
                     if "error" in resp:
-                         # AnonFiles error structure might be different based on success: false
-                         # Based on docs: 
-                         # Error Response { "status": false, "data": { ... "message": ... } }
-                         # OR Error Codes list implies simple codes? 
-                         # Let's assume the JSON structure in docs.
                          if "data" in resp and "file" in resp["data"] and "message" in resp["data"]["file"]:
                              error_msg = resp["data"]["file"]["message"]
                     raise Exception(f"AnonFiles Error: {error_msg}")
