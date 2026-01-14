@@ -66,15 +66,13 @@ class AnonFilesUpload:
         
         cmd = [
             "curl",
-            "-v",
+            "-s",
             "--http1.1",
             "-F", f"file=@{file_path}",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             url
         ]
         
-        LOGGER.info(f"DEBUG: Executing curl command for {file_path}")
-
         def _run_curl():
             return srun(cmd, stdout=PIPE, stderr=PIPE)
 
@@ -87,16 +85,69 @@ class AnonFilesUpload:
             raise Exception(f"Curl Error (Code {process.returncode}): {stderr}")
             
         if not stdout:
-             raise Exception(f"AnonFiles Empty Response. Curl Stderr: {stderr}")
+             # Check for common HTTP errors in stderr if available, or just generic message
+             if "413 Payload Too Large" in stderr or "413 Request Entity Too Large" in stderr:
+                 raise Exception("AnonFiles Error: File is too large for the server (HTTP 413). Check your account limits.")
+             elif "502 Bad Gateway" in stderr:
+                 raise Exception("AnonFiles Error: Server is down or overloaded (HTTP 502).")
+             
+             # If we used -s, stderr might be empty unless we use -S (show error) or if curl failed silently?
+             # But if returncode is 0 and stdout is empty, it's usually a server issue.
+             # We can try to re-run with -v if this happens? No, better to just report.
+             
+             # Actually, without -v, curl -s won't print headers to stderr.
+             # So we can't parse 413 from stderr if we use -s.
+             # We should use -v but filter the logs?
+             # Or use -w "%{http_code}" to get the status code at the end.
+             pass
+
+        # Let's use -w to get status code reliably
+        # We need to separate json output from status code.
+        # curl -w "\n%{http_code}" ... 
+        
+        # New approach: Use write-out to get http code
+        cmd = [
+            "curl",
+            "-s",
+            "-w", "\n%{http_code}", 
+            "--http1.1",
+            "-F", f"file=@{file_path}",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            url
+        ]
+        
+        def _run_curl():
+            return srun(cmd, stdout=PIPE, stderr=PIPE)
+
+        process = await get_event_loop().run_in_executor(None, _run_curl)
+        
+        output = process.stdout.decode().strip()
+        # The last line should be the http code
+        lines = output.split('\n')
+        if not lines:
+             raise Exception(f"Curl produced no output. Stderr: {process.stderr.decode().strip()}")
+             
+        http_code = lines[-1]
+        response_body = "\n".join(lines[:-1])
+        
+        if http_code == "413":
+             raise Exception("AnonFiles Error: File is too large for the server (HTTP 413).")
+        elif http_code == "502":
+             raise Exception("AnonFiles Error: Bad Gateway (HTTP 502).")
+        elif not http_code.startswith("2"):
+             raise Exception(f"AnonFiles Error: HTTP {http_code}. Response: {response_body}")
+
+        if not response_body:
+             raise Exception(f"AnonFiles returned empty body with HTTP {http_code}.")
 
         try:
-            return json_loads(stdout)
+            return json_loads(response_body)
         except Exception as e:
-             raise Exception(f"JSON Decode Error: {e} | Body: {stdout} | Stderr: {stderr}")
+             raise Exception(f"JSON Decode Error: {e} | Body: {response_body}")
 
     async def upload(self):
         try:
-            LOGGER.info(f"AnonFiles Uploading (v2): {self._path}")
+            LOGGER.info(f"AnonFiles Uploading: {self._path}")
             self._updater = SetInterval(self.update_interval, self.progress)
 
             if not self.api_key:
