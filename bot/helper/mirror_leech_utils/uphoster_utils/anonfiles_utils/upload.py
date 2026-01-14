@@ -95,6 +95,9 @@ class AnonFilesUpload:
                     self.__read_callback(self.tell())
                 return super().read(size)
 
+            def __len__(self):
+                return self.length
+
         data = aiohttp.FormData()
         # "file" is the key expected by AnonFiles
         data.add_field('file', 
@@ -103,7 +106,8 @@ class AnonFilesUpload:
 
         # Increase timeout for large file uploads
         timeout = aiohttp.ClientTimeout(total=None, connect=60, sock_read=600, sock_connect=60)
-        async with ClientSession(timeout=timeout) as session:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        async with ClientSession(timeout=timeout, headers=headers) as session:
             try:
                 async with session.post(url, data=data) as resp:
                     if resp.status == 200:
