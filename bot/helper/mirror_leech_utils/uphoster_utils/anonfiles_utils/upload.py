@@ -1,7 +1,8 @@
 from logging import getLogger
 from os import path as ospath
 from json import loads as json_loads
-from asyncio import create_subprocess_exec, subprocess
+from asyncio import get_event_loop
+from subprocess import run as srun, PIPE
 from aiofiles.os import path as aiopath
 from aiofiles.os import rename as aiorename
 from tenacity import (
@@ -49,7 +50,6 @@ class AnonFilesUpload:
         return self.__processed_bytes
 
     async def progress(self):
-        # Placeholder for progress since we are using curl without progress parsing
         if self.is_uploading:
              self.total_time += self.update_interval
 
@@ -64,50 +64,45 @@ class AnonFilesUpload:
              
         url = f"{self.api_url}?key={self.api_key}"
         
-        # Use curl for upload as it handles multipart/form-data and large files robustly
-        # This bypasses aiohttp issues with chunked encoding or timeouts on some servers
-        
         cmd = [
             "curl",
-            "-v", # Verbose mode to debug connection/headers
+            "-v",
             "--http1.1",
             "-F", f"file=@{file_path}",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             url
         ]
+        
+        LOGGER.info(f"DEBUG: Executing curl command for {file_path}")
 
-        process = await create_subprocess_exec(
-            *cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
+        def _run_curl():
+            return srun(cmd, stdout=PIPE, stderr=PIPE)
+
+        process = await get_event_loop().run_in_executor(None, _run_curl)
         
-        stdout, stderr = await process.communicate()
-        
-        decoded_stdout = stdout.decode().strip()
-        decoded_stderr = stderr.decode().strip()
+        stdout = process.stdout.decode().strip()
+        stderr = process.stderr.decode().strip()
 
         if process.returncode != 0:
-            raise Exception(f"Curl Error: {decoded_stderr}")
+            raise Exception(f"Curl Error (Code {process.returncode}): {stderr}")
             
-        if not decoded_stdout:
-             raise Exception(f"AnonFiles returned empty response. Curl Stderr: {decoded_stderr}")
+        if not stdout:
+             raise Exception(f"AnonFiles Empty Response. Curl Stderr: {stderr}")
 
         try:
-            return json_loads(decoded_stdout)
+            return json_loads(stdout)
         except Exception as e:
-             raise Exception(f"JSON Decode Error: {e} | Response: {decoded_stdout}")
+             raise Exception(f"JSON Decode Error: {e} | Body: {stdout} | Stderr: {stderr}")
 
     async def upload(self):
         try:
-            LOGGER.info(f"AnonFiles Uploading: {self._path}")
+            LOGGER.info(f"AnonFiles Uploading (v2): {self._path}")
             self._updater = SetInterval(self.update_interval, self.progress)
 
             if not self.api_key:
                  raise ValueError("AnonFiles API key not configured!")
 
             if await aiopath.isfile(self._path):
-                # Replace spaces with underscores or similar if needed
                 new_path = ospath.join(
                     ospath.dirname(self._path), ospath.basename(self._path).replace(" ", "_")
                 )
