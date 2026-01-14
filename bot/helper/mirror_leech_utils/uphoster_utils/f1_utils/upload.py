@@ -97,7 +97,6 @@ class F1Upload:
              
         server_data = await self.get_upload_server()
         upload_url = f"https://{server_data['url']}/upload.cgi?id={server_data['id']}"
-        LOGGER.info(f"DEBUG: F1 Upload URL: {upload_url}")
         
         # 1. Upload File
         cmd = [
