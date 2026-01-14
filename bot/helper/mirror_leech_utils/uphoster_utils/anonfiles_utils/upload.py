@@ -69,8 +69,8 @@ class AnonFilesUpload:
         
         cmd = [
             "curl",
-            "-s", 
-            "--http1.1", # Force HTTP/1.1 to avoid HTTP/2 stream issues with some servers
+            "-v", # Verbose mode to debug connection/headers
+            "--http1.1",
             "-F", f"file=@{file_path}",
             "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             url
