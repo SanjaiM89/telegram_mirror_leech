@@ -41,14 +41,28 @@ async def task_status(_, message):
         count = len(task_dict)
     if count == 0:
         currentTime = get_readable_time(time() - bot_start_time)
-        free = get_readable_file_size(disk_usage(DOWNLOAD_DIR).free)
+        try:
+            disk = disk_usage(DOWNLOAD_DIR)
+            free = get_readable_file_size(disk.free)
+            disk_pct = round(100 - disk.percent, 1)
+        except Exception:
+            free = "N/A"
+            disk_pct = 0
+        try:
+            cpu = cpu_percent()
+        except Exception:
+            cpu = 0
+        try:
+            ram = virtual_memory().percent
+        except Exception:
+            ram = 0
         msg = f"""〶 <b><i>No Active Bot Tasks!</i></b>
 │
 ┖ <b>NOTE</b> → <i>Each user can get status for his tasks by adding "me" or user_id like "1234xxx" after cmd: /{BotCommands.StatusCommand[0]} me or /{BotCommands.StatusCommand[1]} me</i>
 
 ⌬ <b><u>Bot Stats</u></b>
-┟ <b>CPU</b> → {cpu_percent()}% | <b>F</b> → {free} [{round(100 - disk_usage(DOWNLOAD_DIR).percent, 1)}%]
-┖ <b>RAM</b> → {virtual_memory().percent}% | <b>UP</b> → {currentTime}
+┟ <b>CPU</b> → {cpu}% | <b>F</b> → {free} [{disk_pct}%]
+┖ <b>RAM</b> → {ram}% | <b>UP</b> → {currentTime}
 """
         reply_message = await send_message(message, msg)
         await auto_delete_message(message, reply_message)

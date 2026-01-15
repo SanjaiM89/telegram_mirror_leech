@@ -73,10 +73,22 @@ async def get_stats(event, key="home"):
         btns.data_button("Sys Tasks", f"stats {user_id} systasks")
         msg = "⌬ <b><i>Bot & OS Statistics!</i></b>"
     elif key == "stbot":
-        total, used, free, disk = disk_usage("/")
-        swap = swap_memory()
-        memory = virtual_memory()
-        disk_io = disk_io_counters()
+        try:
+            total, used, free, disk = disk_usage("/")
+        except Exception:
+            total, used, free, disk = 0, 0, 0, 0
+        try:
+            swap = swap_memory()
+        except Exception:
+            swap = type('obj', (object,), {'percent': 0, 'used': 0, 'free': 0, 'total': 0})()
+        try:
+            memory = virtual_memory()
+        except Exception:
+            memory = type('obj', (object,), {'percent': 0, 'used': 0, 'available': 0, 'total': 0})()
+        try:
+            disk_io = disk_io_counters()
+        except Exception:
+            disk_io = None
         msg = f"""⌬ <b><i>BOT STATISTICS :</i></b>
 ┖ <b>Bot Uptime :</b> {get_readable_time(time() - bot_start_time)}
 
@@ -95,26 +107,56 @@ async def get_stats(event, key="home"):
 ┖ <b>U :</b> {get_readable_file_size(used)} | <b>F :</b> {get_readable_file_size(free)} | <b>T :</b> {get_readable_file_size(total)}
 """
     elif key == "stsys":
-        cpu_usage = cpu_percent(interval=0.5)
+        try:
+            cpu_usage = cpu_percent(interval=0.5)
+        except Exception:
+            cpu_usage = 0
+        try:
+            net_io = net_io_counters()
+            net_sent = get_readable_file_size(net_io.bytes_sent)
+            net_recv = get_readable_file_size(net_io.bytes_recv)
+            net_pkts_sent = str(net_io.packets_sent)[:-3] + "k" if net_io.packets_sent > 1000 else str(net_io.packets_sent)
+            net_pkts_recv = str(net_io.packets_recv)[:-3] + "k" if net_io.packets_recv > 1000 else str(net_io.packets_recv)
+            net_total = get_readable_file_size(net_io.bytes_recv + net_io.bytes_sent)
+        except Exception:
+            net_sent, net_recv, net_pkts_sent, net_pkts_recv, net_total = "N/A", "N/A", "N/A", "N/A", "N/A"
+        try:
+            cpu_freq_val = f"{cpu_freq().current / 1000:.2f} GHz" if cpu_freq() else "Access Denied"
+        except Exception:
+            cpu_freq_val = "N/A"
+        try:
+            load_avg = "%, ".join(str(round((x / cpu_count() * 100), 2)) for x in getloadavg()) + "%, (1m, 5m, 15m)"
+        except Exception:
+            load_avg = "N/A"
+        try:
+            p_cores = cpu_count(logical=False)
+            t_cores = cpu_count(logical=True)
+            v_cores = t_cores - p_cores if p_cores else 0
+        except Exception:
+            p_cores, v_cores, t_cores = 0, 0, 0
+        try:
+            usable_cpus = len(Process().cpu_affinity())
+        except Exception:
+            usable_cpus = t_cores or 1
         msg = f"""⌬ <b><i>OS SYSTEM :</i></b>
 ┟ <b>OS Uptime :</b> {get_readable_time(time() - boot_time())}
 ┠ <b>OS Version :</b> {version()}
 ┖ <b>OS Arch :</b> {platform()}
 
 ⌬ <b><i>NETWORK STATS :</i></b>
-┟ <b>Upload Data:</b> {get_readable_file_size(net_io_counters().bytes_sent)}
-┠ <b>Download Data:</b> {get_readable_file_size(net_io_counters().bytes_recv)}
-┠ <b>Pkts Sent:</b> {str(net_io_counters().packets_sent)[:-3]}k
-┠ <b>Pkts Received:</b> {str(net_io_counters().packets_recv)[:-3]}k
-┖ <b>Total I/O Data:</b> {get_readable_file_size(net_io_counters().bytes_recv + net_io_counters().bytes_sent)}
+┟ <b>Upload Data:</b> {net_sent}
+┠ <b>Download Data:</b> {net_recv}
+┠ <b>Pkts Sent:</b> {net_pkts_sent}
+┠ <b>Pkts Received:</b> {net_pkts_recv}
+┖ <b>Total I/O Data:</b> {net_total}
 
 ┎ <b>CPU :</b>
 ┃ {get_progress_bar_string(cpu_usage)} {cpu_usage}%
-┠ <b>CPU Frequency :</b> {f"{cpu_freq().current / 1000:.2f} GHz" if cpu_freq() else "Access Denied"}
-┠ <b>System Avg Load :</b> {"%, ".join(str(round((x / cpu_count() * 100), 2)) for x in getloadavg())}%, (1m, 5m, 15m)
-┠ <b>P-Core(s) :</b> {cpu_count(logical=False)} | <b>V-Core(s) :</b> {cpu_count(logical=True) - cpu_count(logical=False)}
-┠ <b>Total Core(s) :</b> {cpu_count(logical=True)}
-┖ <b>Usable CPU(s) :</b> {len(Process().cpu_affinity())}
+┠ <b>CPU Frequency :</b> {cpu_freq_val}
+┠ <b>System Avg Load :</b> {load_avg}
+┠ <b>P-Core(s) :</b> {p_cores} | <b>V-Core(s) :</b> {v_cores}
+┠ <b>Total Core(s) :</b> {t_cores}
+┖ <b>Usable CPU(s) :</b> {usable_cpus}
 """
     elif key == "strepo":
         last_commit, changelog = "No Data", "N/A"
